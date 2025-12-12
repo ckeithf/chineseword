@@ -1,0 +1,602 @@
+import React, { useState, useEffect } from 'react';
+import { BookOpen, Search, Star, Brain, Split, Image as ImageIcon, Lightbulb, Save, Edit3, PlusCircle, RotateCcw, Sparkles, Loader, FileText, ArrowLeft, Volume2 } from 'lucide-react';
+
+const ChineseLearningApp = () => {
+  const [inputChar, setInputChar] = useState('');
+  const [activeChar, setActiveChar] = useState(null);
+  const [isEditing, setIsEditing] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+  const [articleMode, setArticleMode] = useState(false);
+  const [editFormData, setEditFormData] = useState(null);
+  const [notification, setNotification] = useState('');
+  const [imageLoading, setImageLoading] = useState(false); // 圖片加載狀態
+
+  // API Key for Gemini (In this environment, it's injected at runtime)
+  const apiKey = ""; 
+
+  // 定義香港常用楷書字型 Stack
+  const hkFontFamily = 'KaiTi, BiauKai, "AR PL UKai TW", "AR PL UKai CN", STKaiti, "Han Wang KaiStd", serif';
+
+  // Initial Database (預設資料庫 - 繁體中文)
+  const initialDatabase = {
+    '明': {
+      char: '明',
+      pinyin: 'míng',
+      meaning: '光亮、清楚',
+      decomposition: ['日', '月'],
+      visualType: 'combination', 
+      visualData: { left: '太陽', right: '月亮' },
+      imagePrompt: "cute cartoon sun and moon shining together in the sky, bright, simple vector illustration, white background",
+      story: "太陽(日)和月亮(月)在一起，就會變得很光亮(明)。",
+      logic: {
+        structure: '左右結構',
+        radical: '日 (日部)',
+        explanation: '會意字。日月同輝，代表光亮。'
+      }
+    },
+    '休': {
+      char: '休',
+      pinyin: 'xiū',
+      meaning: '休息',
+      decomposition: ['人', '木'],
+      visualType: 'combination',
+      visualData: { left: '人', right: '樹木' },
+      imagePrompt: "cute cartoon person sleeping leaning against a tree, relaxing, simple vector illustration, white background",
+      story: "一個人(人)靠在樹(木)旁休息(休)。",
+      logic: {
+        structure: '左右結構',
+        radical: '人 (人部)',
+        explanation: '會意字。人依傍大樹休息。'
+      }
+    },
+    '男': {
+      char: '男',
+      pinyin: 'nán',
+      meaning: '男人、男性',
+      decomposition: ['田', '力'],
+      visualType: 'vertical',
+      visualData: { top: '田地', bottom: '力氣' },
+      imagePrompt: "cartoon farmer working in a field with strength, cute style, simple vector illustration, white background",
+      story: "在田(田)裏用力(力)工作的人，就是男人(男)。",
+      logic: {
+        structure: '上下結構',
+        radical: '田 (田部)',
+        explanation: '會意字。在田間出力勞作的人。'
+      }
+    },
+    '尖': {
+      char: '尖',
+      pinyin: 'jiān',
+      meaning: '銳利、尖銳',
+      decomposition: ['小', '大'],
+      visualType: 'vertical',
+      visualData: { top: '小', bottom: '大' },
+      imagePrompt: "a sharp pencil tip or a pyramid shape, small top big bottom, cute cartoon style, simple vector, white background",
+      story: "上面小(小)下面大(大)，形狀就是尖(尖)。",
+      logic: {
+        structure: '上下結構',
+        radical: '小 (小部)',
+        explanation: '會意字。上小下大的物體形狀。'
+      }
+    },
+    '看': {
+      char: '看',
+      pinyin: 'kàn',
+      meaning: '看見、觀察',
+      decomposition: ['手', '目'],
+      visualType: 'vertical',
+      visualData: { top: '手', bottom: '眼睛' },
+      imagePrompt: "cartoon monkey putting hand over eyes to look far away, observing, cute style, simple vector, white background",
+      story: "手(手)放在眼睛(目)上，遮住陽光看(看)遠方。",
+      logic: {
+        structure: '上下結構',
+        radical: '目 (目部)',
+        explanation: '會意字。手遮目以望遠。'
+      }
+    }
+  };
+
+  const [library, setLibrary] = useState(initialDatabase);
+
+  // --- 語音朗讀功能 ---
+  const handleSpeak = (text, lang = 'zh-HK') => {
+    if (!text) return;
+    
+    if ('speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.lang = lang; 
+      utterance.rate = 0.75;
+      const voices = window.speechSynthesis.getVoices();
+      const cantoneseVoice = voices.find(v => v.lang.includes('HK') || v.lang.includes('yue'));
+      if (lang === 'zh-HK' && cantoneseVoice) {
+        utterance.voice = cantoneseVoice;
+      }
+      window.speechSynthesis.speak(utterance);
+    } else {
+      setNotification('您的瀏覽器不支援語音功能');
+    }
+  };
+
+  // AI Generation Function
+  const generateCharacterData = async (char) => {
+    setIsLoading(true);
+    setNotification(`正在為「${char}」製作識字卡...`);
+    
+    try {
+      const prompt = `
+        你是一位香港小學中文老師。請為中文字 '${char}' 創建一個適合小二學生（約7歲）學習的 JSON 對象。
+        
+        JSON 必須嚴格遵守以下格式：
+        {
+          "char": "${char}",
+          "pinyin": "拼音（含聲調）",
+          "meaning": "簡單中文解釋 (適合小學生)",
+          "decomposition": ["部件1", "部件2"],
+          "visualType": "只能選以下其一: combination, vertical, pyramid",
+          "visualData": { 
+            "left": "名詞", "right": "名詞" 
+            OR "top": "名詞", "bottom": "名詞" 
+            OR "item": "名詞" 
+          },
+          "imagePrompt": "A detailed English prompt to generate a cute, child-friendly cartoon image representing the meaning of '${char}'. Style: simple vector illustration, flat design, white background.",
+          "story": "一句簡單易記的廣東話口訣或故事，將部件和字義聯繫起來 (繁體中文)。",
+          "logic": {
+            "structure": "結構類型 (例如: 左右結構)",
+            "radical": "部首 (例如: 日部)",
+            "explanation": "簡單的造字原理解釋"
+          }
+        }
+
+        規則:
+        1. "decomposition" 數組應包含組成該字的2個（或3個）部件。
+        2. "visualData" 的值應為描述圖像的簡單中文名詞。
+        3. "imagePrompt" 必須是英文，描述要具體，適合生成圖片 (例如: "cartoon bird flying in sky")。
+        4. 所有顯示文字必須使用繁體中文 (Traditional Chinese)。
+        5. 只返回 JSON 對象，不要包含 markdown 格式。
+      `;
+
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }] }]
+        })
+      });
+
+      const data = await response.json();
+      
+      if (data.error) {
+        throw new Error(data.error.message);
+      }
+
+      let textResponse = data.candidates?.[0]?.content?.parts?.[0]?.text;
+      textResponse = textResponse.replace(/```json/g, '').replace(/```/g, '').trim();
+      const generatedData = JSON.parse(textResponse);
+      
+      setLibrary(prev => ({
+        ...prev,
+        [char]: generatedData
+      }));
+      setActiveChar(generatedData);
+      setNotification(`成功！已為「${char}」製作識字卡。`);
+
+    } catch (error) {
+      console.error("AI Generation Error:", error);
+      setNotification("無法自動生成，開啟手動編輯模式。");
+      enterManualCreationMode(char);
+    } finally {
+      setIsLoading(false);
+      setTimeout(() => setNotification(''), 4000);
+    }
+  };
+
+  const enterManualCreationMode = (char) => {
+      const newTemplate = {
+        char: char,
+        pinyin: '',
+        meaning: '',
+        decomposition: ['', ''],
+        visualType: 'combination',
+        visualData: { left: '部件1', right: '部件2', top: '部件1', bottom: '部件2', item: '部件1' },
+        imagePrompt: `cartoon illustration of ${char}`,
+        story: `為「${char}」創作一個故事...`,
+        logic: {
+          structure: '左右結構',
+          radical: '',
+          explanation: ''
+        }
+      };
+      setActiveChar(newTemplate);
+      setEditFormData(newTemplate);
+      setIsEditing(true);
+  };
+
+  const handleCharClick = (char) => {
+    if (!char || !/[\u4e00-\u9fa5]/.test(char)) return;
+
+    if (library[char]) {
+      setActiveChar(library[char]);
+      setIsEditing(false);
+      setNotification('');
+      handleSpeak(char);
+    } else {
+      generateCharacterData(char);
+    }
+  };
+
+  const handleAnalyze = () => {
+    if (!inputChar.trim()) return;
+    
+    setArticleMode(true);
+    setActiveChar(null);
+    setNotification('請點擊下方文章中的生字來學習！');
+
+    const trimmed = inputChar.trim();
+    if (trimmed.length === 1) {
+       handleCharClick(trimmed);
+    }
+  };
+
+  const handleReset = () => {
+    setArticleMode(false);
+    setActiveChar(null);
+    setNotification('');
+  };
+
+  const handleSave = () => {
+    if (!editFormData) return;
+    const finalData = { ...editFormData };
+    setLibrary(prev => ({ ...prev, [finalData.char]: finalData }));
+    setActiveChar(finalData);
+    setIsEditing(false);
+    setNotification('已儲存修改！');
+    setTimeout(() => setNotification(''), 3000);
+  };
+
+  // Helper function to generate Image URL
+  const getImageUrl = (prompt) => {
+     // Adding specific keywords to ensure consistent style
+     const enhancedPrompt = encodeURIComponent(`${prompt}, minimalist, flat vector art, children's book style, white background`);
+     return `https://image.pollinations.ai/prompt/${enhancedPrompt}?width=300&height=300&nologo=true&seed=${Math.random()}`;
+  };
+
+  const VisualIcon = ({ type }) => {
+    const t = type?.toLowerCase() || '';
+    if (['sun', '日', '太陽'].some(x => t.includes(x))) return <div className="w-12 h-12 rounded-full bg-yellow-400 border-4 border-orange-400 flex items-center justify-center animate-pulse"><span className="text-orange-600 font-bold text-xs" style={{ fontFamily: hkFontFamily }}>日</span></div>;
+    if (['moon', '月', '月亮'].some(x => t.includes(x))) return <div className="w-10 h-10 rounded-full bg-yellow-200 border-r-4 border-yellow-500 transform -rotate-12"><span className="text-yellow-700 font-bold text-xs ml-2" style={{ fontFamily: hkFontFamily }}>月</span></div>;
+    if (['tree', 'wood', '木', '樹', '樹木'].some(x => t.includes(x))) return <div className="flex flex-col items-center"><div className="w-0 h-0 border-l-[15px] border-l-transparent border-r-[15px] border-r-transparent border-b-[30px] border-b-green-600"></div><div className="w-4 h-6 bg-amber-700"></div></div>;
+    if (['water', 'rain', 'river', '水', '氵', '雨'].some(x => t.includes(x))) return <div className="w-10 h-10 bg-blue-100 rounded-full border-2 border-blue-300 flex items-center justify-center text-blue-500 text-2xl">💧</div>;
+    if (['fire', 'heat', '火', '灬'].some(x => t.includes(x))) return <div className="w-10 h-10 bg-orange-100 rounded-full border-2 border-orange-300 flex items-center justify-center text-orange-500 text-2xl">🔥</div>;
+    if (['mountain', 'hill', '山'].some(x => t.includes(x))) return <div className="flex items-end"><div className="w-0 h-0 border-l-[10px] border-l-transparent border-r-[10px] border-r-transparent border-b-[20px] border-b-gray-500"></div><div className="w-0 h-0 border-l-[15px] border-l-transparent border-r-[15px] border-r-transparent border-b-[30px] border-b-gray-600"></div><div className="w-0 h-0 border-l-[10px] border-l-transparent border-r-[10px] border-r-transparent border-b-[20px] border-b-gray-500"></div></div>;
+    if (['person', 'people', 'human', 'man', '人', '亻', '男人'].some(x => t.includes(x))) return <div className="flex flex-col items-center"><div className="w-4 h-4 bg-skin-300 rounded-full bg-orange-200"></div><div className="w-0 h-0 border-l-[10px] border-l-transparent border-r-[10px] border-r-transparent border-b-[20px] border-b-blue-500"></div></div>;
+    if (['woman', 'female', 'girl', '女', '女人'].some(x => t.includes(x))) return <div className="flex flex-col items-center"><div className="w-4 h-4 bg-pink-200 rounded-full"></div><div className="w-0 h-0 border-l-[10px] border-l-transparent border-r-[10px] border-r-transparent border-b-[20px] border-b-pink-400"></div></div>;
+    if (['mouth', 'eat', '口', '嘴'].some(x => t.includes(x))) return <div className="w-8 h-8 border-4 border-red-400 rounded-sm bg-white flex items-center justify-center"><div className="w-4 h-1 bg-red-200 rounded-full"></div></div>;
+    if (['heart', 'love', '心', '忄', '愛'].some(x => t.includes(x))) return <div className="text-red-500 text-3xl">❤️</div>;
+    if (['eye', 'see', '目', '眼睛'].some(x => t.includes(x))) return <div className="w-10 h-6 bg-white border-2 border-black rounded-full flex items-center justify-center"><div className="w-3 h-3 bg-black rounded-full"></div></div>;
+    if (['hand', 'power', 'strength', '力', '手', '扌', '力氣'].some(x => t.includes(x))) return <div className="w-10 h-10 flex items-center justify-center bg-red-100 rounded-lg border-2 border-red-400"><span className="text-2xl">💪</span></div>;
+    if (['small', '小'].some(x => t.includes(x))) return <div className="text-xs transform scale-75 bg-gray-200 p-1 rounded">小</div>;
+    if (['big', '大'].some(x => t.includes(x))) return <div className="text-xl font-bold bg-gray-200 p-2 rounded">大</div>;
+    if (['field', 'farm', '田', '田地'].some(x => t.includes(x))) return <div className="w-10 h-10 bg-green-200 border-2 border-green-700 grid grid-cols-2 grid-rows-2"><div className="border border-green-700"></div><div className="border border-green-700"></div><div className="border border-green-700"></div><div className="border border-green-700"></div></div>;
+    if (['roof', 'home', 'house', '宀', '屋頂', '家'].some(x => t.includes(x))) return <div className="w-12 h-6 border-t-4 border-l-4 border-r-4 border-red-700 rounded-t-lg"></div>;
+    if (['door', 'gate', '門'].some(x => t.includes(x))) return <div className="flex space-x-1"><div className="w-4 h-8 border-2 border-amber-800 bg-amber-100"></div><div className="w-4 h-8 border-2 border-amber-800 bg-amber-100"></div></div>;
+    return <div className="w-12 h-12 bg-white border-2 border-dashed border-gray-300 rounded flex items-center justify-center text-center p-1 overflow-hidden shadow-sm"><span className="text-[10px] font-bold text-gray-500 break-words leading-tight">{type}</span></div>;
+  };
+
+  return (
+    <div className="min-h-screen bg-slate-50 font-sans pb-20">
+      <header className="bg-white shadow-md p-4 sticky top-0 z-10">
+        <div className="max-w-4xl mx-auto flex items-center justify-between">
+          <div className="flex items-center space-x-2">
+            <BookOpen className="text-blue-600 w-8 h-8" />
+            <h1 className="text-xl md:text-2xl font-bold text-gray-800 tracking-wider">快樂識字系統 <span className="hidden md:inline text-sm text-gray-500 font-normal ml-2">小二識字助手</span></h1>
+          </div>
+          <div className="flex items-center space-x-2">
+            <span className="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded font-medium">字庫: {Object.keys(library).length} 個字</span>
+          </div>
+        </div>
+      </header>
+
+      <main className="max-w-4xl mx-auto p-4 md:p-8">
+        
+        {!articleMode ? (
+          <div className="bg-white rounded-2xl shadow-lg p-6 mb-6 text-center">
+            <h2 className="text-lg text-gray-600 mb-4 font-medium">請輸入課文、句子或單字 (將自動生成互動識字卡)</h2>
+            <div className="max-w-2xl mx-auto">
+              <textarea
+                value={inputChar}
+                onChange={(e) => setInputChar(e.target.value)}
+                placeholder="例如：\n今天天氣很好。\n我看見天上的小鳥在飛。\n(可以輸入多行文字)"
+                className="w-full text-xl p-4 border-2 border-blue-200 rounded-xl focus:border-blue-500 focus:outline-none transition-colors min-h-[120px] mb-4 text-gray-700 leading-relaxed"
+                style={{ fontFamily: hkFontFamily }}
+                disabled={isLoading}
+              />
+              <button
+                onClick={handleAnalyze}
+                disabled={isLoading || !inputChar.trim()}
+                className={`text-white px-8 py-3 rounded-xl shadow-md font-bold transition-all active:scale-95 flex items-center justify-center mx-auto
+                  ${isLoading || !inputChar.trim() ? 'bg-gray-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'}`}
+              >
+                {isLoading ? <Loader className="w-6 h-6 animate-spin" /> : '開始學習 / 分析文章'}
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="bg-white rounded-2xl shadow-lg p-6 mb-6 border-l-8 border-blue-500">
+            <div className="flex justify-between items-center mb-4 border-b pb-2">
+               <h2 className="text-lg text-gray-700 font-bold flex items-center"><FileText className="w-5 h-5 mr-2 text-blue-500"/> 點擊字詞來學習</h2>
+               <button onClick={handleReset} className="text-sm text-gray-500 hover:text-blue-600 flex items-center font-medium">
+                 <ArrowLeft className="w-4 h-4 mr-1"/> 返回編輯
+               </button>
+            </div>
+            
+            <div className="text-3xl md:text-4xl leading-loose tracking-wide font-serif text-gray-800 bg-slate-50 p-6 rounded-lg text-center md:text-left" style={{ fontFamily: hkFontFamily }}>
+              {inputChar.split('').map((char, index) => {
+                const isChinese = /[\u4e00-\u9fa5]/.test(char);
+                const isActive = activeChar && activeChar.char === char;
+                
+                if (!isChinese) return <span key={index} className="text-gray-400 mx-1" style={{ fontFamily: 'inherit' }}>{char}</span>;
+                
+                return (
+                  <span
+                    key={index}
+                    onClick={() => handleCharClick(char)}
+                    className={`cursor-pointer inline-block mx-1 transition-all duration-200 rounded px-1
+                      ${isActive 
+                        ? 'bg-blue-600 text-white transform scale-110 shadow-lg' 
+                        : 'hover:bg-blue-200 hover:text-blue-800 hover:scale-110'
+                      }`}
+                  >
+                    {char}
+                  </span>
+                );
+              })}
+            </div>
+            
+            {notification && (
+              <div className={`mt-4 p-2 rounded-lg text-sm font-bold animate-pulse inline-block px-4 
+                ${notification.includes('無法') || notification.includes('Error') ? 'bg-amber-100 text-amber-800' : 'bg-purple-100 text-purple-800'}`}>
+                <span className="flex items-center gap-2">
+                  {isLoading && <Sparkles className="w-4 h-4 text-purple-600" />}
+                  {notification}
+                </span>
+              </div>
+            )}
+          </div>
+        )}
+
+        {isEditing && editFormData && (
+          <div className="bg-white rounded-2xl shadow-xl border-2 border-blue-400 overflow-hidden animate-in fade-in slide-in-from-bottom-4">
+            <div className="bg-blue-600 p-4 flex justify-between items-center text-white">
+              <h3 className="font-bold text-lg flex items-center"><Edit3 className="w-5 h-5 mr-2"/> 手動編輯卡片: {editFormData.char}</h3>
+              <button onClick={() => setIsEditing(false)} className="text-blue-100 hover:text-white text-sm">取消</button>
+            </div>
+            
+            <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-bold text-gray-700 mb-1">拼音</label>
+                  <input className="w-full p-2 border rounded" value={editFormData.pinyin} onChange={e => setEditFormData({...editFormData, pinyin: e.target.value})} placeholder="例如: míng" />
+                </div>
+                <div>
+                  <label className="block text-sm font-bold text-gray-700 mb-1">字義</label>
+                  <input className="w-full p-2 border rounded" value={editFormData.meaning} onChange={e => setEditFormData({...editFormData, meaning: e.target.value})} placeholder="例如: 光亮" />
+                </div>
+                <div className="bg-purple-50 p-3 rounded-lg border border-purple-200">
+                  <h4 className="font-bold text-purple-800 text-sm mb-2 flex items-center"><Split className="w-4 h-4 mr-1"/> 4. 拆字記憶法</h4>
+                  <div className="flex space-x-2">
+                    <input className="w-1/2 p-2 border rounded text-center" value={editFormData.decomposition[0]} onChange={e => { const newDecomp = [...editFormData.decomposition]; newDecomp[0] = e.target.value; setEditFormData({...editFormData, decomposition: newDecomp}); }} placeholder="部件 1" />
+                    <span className="self-center font-bold text-purple-400">+</span>
+                    <input className="w-1/2 p-2 border rounded text-center" value={editFormData.decomposition[1]} onChange={e => { const newDecomp = [...editFormData.decomposition]; newDecomp[1] = e.target.value; setEditFormData({...editFormData, decomposition: newDecomp}); }} placeholder="部件 2" />
+                  </div>
+                </div>
+              </div>
+
+              <div className="space-y-4">
+                 <div className="bg-amber-50 p-3 rounded-lg border border-amber-200">
+                    <h4 className="font-bold text-amber-800 text-sm mb-2 flex items-center"><ImageIcon className="w-4 h-4 mr-1"/> 1. 影像認字法</h4>
+                    <select className="w-full p-2 border rounded mb-2" value={editFormData.visualType} onChange={e => setEditFormData({...editFormData, visualType: e.target.value})}>
+                      <option value="combination">左右結構 (Left-Right)</option>
+                      <option value="vertical">上下結構 (Top-Bottom)</option>
+                      <option value="pyramid">品字結構 (Pyramid)</option>
+                    </select>
+                    
+                    {/* Prompt 編輯欄位 */}
+                    <div className="mb-2">
+                         <label className="block text-xs font-bold text-gray-500 mb-1">AI 繪圖指令 (英文)</label>
+                         <textarea 
+                           className="w-full p-2 border rounded text-xs text-gray-600"
+                           rows={2}
+                           value={editFormData.imagePrompt || ''}
+                           onChange={e => setEditFormData({...editFormData, imagePrompt: e.target.value})}
+                           placeholder="例如: cute cartoon sun"
+                         />
+                    </div>
+
+                    <div className="flex space-x-2">
+                      {editFormData.visualType === 'combination' && (
+                        <>
+                           <input className="w-1/2 p-2 border rounded text-xs" placeholder="左邊 (例: 太陽)" value={editFormData.visualData.left} onChange={e => setEditFormData({...editFormData, visualData: {...editFormData.visualData, left: e.target.value}})} />
+                           <input className="w-1/2 p-2 border rounded text-xs" placeholder="右邊 (例: 月亮)" value={editFormData.visualData.right} onChange={e => setEditFormData({...editFormData, visualData: {...editFormData.visualData, right: e.target.value}})} />
+                        </>
+                      )}
+                      {editFormData.visualType === 'vertical' && (
+                        <>
+                           <input className="w-1/2 p-2 border rounded text-xs" placeholder="上方" value={editFormData.visualData.top} onChange={e => setEditFormData({...editFormData, visualData: {...editFormData.visualData, top: e.target.value}})} />
+                           <input className="w-1/2 p-2 border rounded text-xs" placeholder="下方" value={editFormData.visualData.bottom} onChange={e => setEditFormData({...editFormData, visualData: {...editFormData.visualData, bottom: e.target.value}})} />
+                        </>
+                      )}
+                    </div>
+                 </div>
+
+                 <div className="bg-green-50 p-3 rounded-lg border border-green-200">
+                    <h4 className="font-bold text-green-800 text-sm mb-2 flex items-center"><BookOpen className="w-4 h-4 mr-1"/> 2. 故事認字法</h4>
+                    <textarea className="w-full p-2 border rounded text-sm" rows={2} value={editFormData.story} onChange={e => setEditFormData({...editFormData, story: e.target.value})} />
+                 </div>
+              </div>
+              
+              <div className="md:col-span-2 bg-blue-50 p-3 rounded-lg border border-blue-200">
+                 <h4 className="font-bold text-blue-800 text-sm mb-2 flex items-center"><Brain className="w-4 h-4 mr-1"/> 3. 邏輯分析法</h4>
+                 <div className="grid grid-cols-3 gap-2">
+                    <input className="p-2 border rounded text-sm" placeholder="結構" value={editFormData.logic.structure} onChange={e => setEditFormData({...editFormData, logic: {...editFormData.logic, structure: e.target.value}})} />
+                    <input className="p-2 border rounded text-sm" placeholder="部首" value={editFormData.logic.radical} onChange={e => setEditFormData({...editFormData, logic: {...editFormData.logic, radical: e.target.value}})} />
+                    <input className="p-2 border rounded text-sm" placeholder="類型解釋" value={editFormData.logic.explanation} onChange={e => setEditFormData({...editFormData, logic: {...editFormData.logic, explanation: e.target.value}})} />
+                 </div>
+              </div>
+            </div>
+            
+            <div className="p-4 bg-gray-50 flex justify-end">
+              <button onClick={handleSave} className="bg-green-600 hover:bg-green-700 text-white px-6 py-2 rounded-lg font-bold flex items-center shadow-lg transform active:scale-95 transition-all">
+                <Save className="w-5 h-5 mr-2" /> 儲存卡片
+              </button>
+            </div>
+          </div>
+        )}
+
+        {!isEditing && activeChar && !isLoading && (
+          <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
+            <div className="flex justify-end mb-4">
+              <button onClick={() => { setEditFormData(activeChar); setIsEditing(true); }} className="text-sm flex items-center text-gray-500 hover:text-blue-600 bg-white px-3 py-1 rounded-full shadow-sm border border-gray-200">
+                <Edit3 className="w-3 h-3 mr-1" /> 編輯此卡
+              </button>
+            </div>
+
+            <div className="flex flex-col md:flex-row gap-6 mb-8">
+              <div className="md:w-1/3 bg-white rounded-2xl shadow-lg p-6 flex flex-col items-center justify-center border-b-4 border-blue-500 relative overflow-hidden group">
+                <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-blue-400 to-purple-400"></div>
+                
+                <button 
+                  onClick={(e) => { e.stopPropagation(); handleSpeak(activeChar.char); }} 
+                  className="absolute top-4 right-4 text-gray-400 hover:text-blue-600 p-2 rounded-full hover:bg-blue-50 transition-colors"
+                  title="朗讀生字 (粵語)"
+                >
+                  <Volume2 className="w-6 h-6" />
+                </button>
+
+                <div className="text-gray-400 text-xs font-bold uppercase tracking-widest mb-2">生字卡</div>
+                <div className="text-9xl font-serif text-gray-800 mb-2 leading-none cursor-pointer hover:scale-105 transition-transform" 
+                     onClick={() => handleSpeak(activeChar.char)}
+                     style={{ fontFamily: hkFontFamily }}
+                >
+                  {activeChar.char}
+                </div>
+                
+                <div className="flex items-center gap-2 cursor-pointer hover:text-blue-800 transition-colors" onClick={() => handleSpeak(activeChar.char, 'zh-CN')}>
+                   <div className="text-3xl text-blue-600 font-mono font-bold">{activeChar.pinyin || '---'}</div>
+                   <Volume2 className="w-4 h-4 text-blue-300" />
+                </div>
+                
+                <div className="text-xl text-gray-600 font-medium mt-2">{activeChar.meaning || '---'}</div>
+              </div>
+
+              <div className="md:w-2/3 grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="bg-amber-50 rounded-xl p-5 border-2 border-amber-200 relative overflow-hidden group hover:border-amber-400 transition-colors flex flex-col">
+                  <div className="absolute top-0 right-0 bg-amber-200 text-amber-800 text-xs px-2 py-1 rounded-bl-lg font-bold">1. 影像認字法</div>
+                  <div className="flex items-center space-x-2 mb-3"><ImageIcon className="text-amber-600 w-5 h-5" /><h3 className="font-bold text-amber-800">影像記憶</h3></div>
+                  
+                  {/* AI Generated Image Section */}
+                  <div className="flex-1 flex flex-col items-center justify-center mb-2">
+                     {activeChar.imagePrompt ? (
+                         <div className="w-full h-32 relative rounded-lg overflow-hidden bg-white border border-amber-100 shadow-inner group-hover:shadow-md transition-shadow">
+                             <img 
+                               src={getImageUrl(activeChar.imagePrompt)}
+                               alt={activeChar.char}
+                               className="w-full h-full object-contain hover:scale-110 transition-transform duration-700"
+                               loading="lazy"
+                             />
+                             <div className="absolute bottom-0 right-0 bg-amber-100 text-[10px] px-1 text-amber-600 opacity-70">AI 生成</div>
+                         </div>
+                     ) : (
+                         <div className="w-full h-32 flex items-center justify-center bg-gray-100 rounded text-gray-400 text-xs">暫無圖片</div>
+                     )}
+                  </div>
+
+                  {/* Original Icons (Below Image) */}
+                  <div className="flex items-center justify-center h-16 space-x-3 border-t border-amber-100 pt-2">
+                    {activeChar.visualType === 'combination' && (<><VisualIcon type={activeChar.visualData.left} /><span className="text-xl text-amber-400">+</span><VisualIcon type={activeChar.visualData.right} /></>)}
+                    {activeChar.visualType === 'vertical' && (<div className="flex items-center gap-1"><VisualIcon type={activeChar.visualData.top} /><div className="w-px h-8 border-l border-dashed border-amber-400 mx-1"></div><VisualIcon type={activeChar.visualData.bottom} /></div>)}
+                    {activeChar.visualType === 'pyramid' && (<div className="flex flex-col items-center -space-y-2 scale-75"><VisualIcon type={activeChar.visualData.item} /><div className="flex space-x-1"><VisualIcon type={activeChar.visualData.item} /><VisualIcon type={activeChar.visualData.item} /></div></div>)}
+                  </div>
+                </div>
+
+                <div className="bg-purple-50 rounded-xl p-5 border-2 border-purple-200 relative overflow-hidden group hover:border-purple-400 transition-colors">
+                  <div className="absolute top-0 right-0 bg-purple-200 text-purple-800 text-xs px-2 py-1 rounded-bl-lg font-bold">4. 拆字記憶法</div>
+                  
+                  <button onClick={() => handleSpeak(activeChar.decomposition.join(' 加 '))} className="absolute bottom-2 right-2 text-purple-300 hover:text-purple-700 p-1">
+                    <Volume2 className="w-4 h-4" />
+                  </button>
+
+                  <div className="flex items-center space-x-2 mb-3"><Split className="text-purple-600 w-5 h-5" /><h3 className="font-bold text-purple-800">部件拆解</h3></div>
+                  <div className="flex items-center justify-center h-24 bg-white rounded-lg shadow-inner">
+                    {activeChar.decomposition.map((part, index) => (
+                      <React.Fragment key={index}>
+                        <div 
+                          className="w-12 h-12 flex items-center justify-center text-3xl font-serif text-purple-700 bg-purple-100 rounded-lg mx-2 cursor-pointer hover:bg-purple-200"
+                          onClick={() => handleSpeak(part)}
+                          style={{ fontFamily: hkFontFamily }}
+                        >
+                          {part || '?'}
+                        </div>
+                        {index < activeChar.decomposition.length - 1 && (<span className="text-purple-300 text-xl font-bold">+</span>)}
+                      </React.Fragment>
+                    ))}
+                    <span className="text-purple-300 text-xl font-bold mx-2">=</span>
+                    <div className="text-3xl font-serif text-gray-800" style={{ fontFamily: hkFontFamily }}>{activeChar.char}</div>
+                  </div>
+                </div>
+
+                <div className="bg-green-50 rounded-xl p-5 border-2 border-green-200 relative overflow-hidden md:col-span-2 group hover:border-green-400 transition-colors">
+                  <div className="absolute top-0 right-0 bg-green-200 text-green-800 text-xs px-2 py-1 rounded-bl-lg font-bold">2. 故事認字法</div>
+                  
+                  <button onClick={() => handleSpeak(activeChar.story)} className="absolute top-3 right-16 text-green-600 hover:text-green-800 bg-green-100 px-2 py-1 rounded-full text-xs font-bold flex items-center">
+                    <Volume2 className="w-3 h-3 mr-1" /> 朗讀故事
+                  </button>
+
+                  <div className="flex items-center space-x-2 mb-2"><BookOpen className="text-green-600 w-5 h-5" /><h3 className="font-bold text-green-800">識字口訣 / 故事</h3></div>
+                  <p className="text-lg text-green-900 leading-relaxed font-medium bg-white/50 p-3 rounded-lg cursor-pointer hover:bg-white/80 transition-colors" onClick={() => handleSpeak(activeChar.story)}>
+                    "{activeChar.story}"
+                  </p>
+                </div>
+
+                <div className="bg-blue-50 rounded-xl p-5 border-2 border-blue-200 relative overflow-hidden md:col-span-2 group hover:border-blue-400 transition-colors">
+                  <div className="absolute top-0 right-0 bg-blue-200 text-blue-800 text-xs px-2 py-1 rounded-bl-lg font-bold">3. 邏輯分析法</div>
+                  
+                  <button onClick={() => handleSpeak(`${activeChar.logic.structure}, ${activeChar.logic.explanation}`)} className="absolute bottom-2 right-2 text-blue-400 hover:text-blue-700 p-1">
+                    <Volume2 className="w-4 h-4" />
+                  </button>
+
+                  <div className="flex items-center space-x-2 mb-3"><Brain className="text-blue-600 w-5 h-5" /><h3 className="font-bold text-blue-800">字形結構分析</h3></div>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div className="bg-white p-3 rounded-lg shadow-sm border border-blue-100"><span className="text-xs text-gray-500 uppercase font-bold">結構</span><div className="text-blue-900 font-medium">{activeChar.logic.structure}</div></div>
+                    <div className="bg-white p-3 rounded-lg shadow-sm border border-blue-100"><span className="text-xs text-gray-500 uppercase font-bold">部首</span><div className="text-blue-900 font-medium">{activeChar.logic.radical}</div></div>
+                    <div className="bg-white p-3 rounded-lg shadow-sm border border-blue-100"><span className="text-xs text-gray-500 uppercase font-bold">類型</span><div className="text-blue-900 font-medium">{activeChar.logic.explanation}</div></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="bg-yellow-50 rounded-xl p-4 border border-yellow-200 flex items-start space-x-3">
+               <Lightbulb className="text-yellow-600 w-6 h-6 flex-shrink-0 mt-1" />
+               <div>
+                 <h4 className="font-bold text-yellow-800">老師小貼士</h4>
+                 <p className="text-sm text-yellow-800 opacity-90">如果學生忘記了「{activeChar.char}」，試著先提醒他們那個故事！ "{activeChar.story.substring(0, 20)}..."</p>
+               </div>
+            </div>
+          </div>
+        )}
+
+        {!activeChar && !isEditing && !isLoading && !articleMode && (
+          <div className="text-center py-12 opacity-60">
+             <div className="flex justify-center mb-6"><div className="bg-blue-100 p-6 rounded-full"><Star className="w-16 h-16 text-blue-400" /></div></div>
+             <h3 className="text-2xl font-bold text-gray-400 mb-2">準備好學習了嗎？</h3>
+             <p className="text-gray-400 max-w-md mx-auto">請在上方輸入一段文字，我們會自動為您生成學習卡！</p>
+          </div>
+        )}
+      </main>
+    </div>
+  );
+};
+
+export default ChineseLearningApp;
